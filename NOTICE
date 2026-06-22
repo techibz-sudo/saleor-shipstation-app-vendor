@@ -1,0 +1,15 @@
+saleor-shipstation-app
+======================
+
+This project contains portions derived from `saleor/examples/example-app-shipstation`
+(BSD-3-Clause license, Copyright (c) 2020-2022, Saleor Commerce). See:
+
+  https://github.com/saleor/examples/tree/main/example-app-shipstation
+
+Specifically:
+- ShipStation REST API client structure (src/lib/shipstation/client.ts)
+- ShipStation Basic-auth header construction
+- The dual SHIPPING_LIST_METHODS_FOR_CHECKOUT / ORDER_CREATED webhook split is
+  inspired by the example's architecture; the implementation here is original.
+
+The complete BSD-3-Clause license text is reproduced in LICENSE.
