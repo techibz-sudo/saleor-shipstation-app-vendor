@@ -54,7 +54,9 @@ describe("mapSaleorOrderToShipstation (v2)", () => {
 		expect(result.external_shipment_id).toBe("1");
 		expect(result.external_order_id).toBe("1");
 		expect(result.order_number).toBe("1001");
-		expect(result.ship_date).toBe("2026-05-14");
+		// Past order dates are clamped to today — ShipStation rejects past
+		// ship dates with 400 invalid_date (seen on webhook replays).
+		expect(result.ship_date).toBe(new Date().toISOString().slice(0, 10));
 		// create_sales_order: true is required for the order to surface in the
 		// operator-facing Orders view. ShipStation auto-assigns it to its "API
 		// Shipments" store when no explicit store_id is provided.
@@ -81,6 +83,12 @@ describe("mapSaleorOrderToShipstation (v2)", () => {
 			external_order_id: "1",
 			options: [{ name: "Variant", value: "5mg" }],
 		});
+	});
+
+	it("keeps a future order date as ship_date", () => {
+		const order = makeOrder({ created: "2999-01-02T03:04:05+00:00" });
+		const result = mapSaleorOrderToShipstation(order, MAP_OPTIONS);
+		expect(result.ship_date).toBe("2999-01-02");
 	});
 
 	it("keeps KG as kilogram (v2 accepts kilogram natively)", () => {

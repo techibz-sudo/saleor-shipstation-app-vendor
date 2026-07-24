@@ -120,6 +120,13 @@ export function mapSaleorOrderToShipstation(
 	// the full Saleor ID when ShipStation's webhook calls back.
 	const shortOrderId = shortenSaleorOrderId(order.id);
 
+	// ShipStation rejects past ship dates (400 invalid_date). The order's creation
+	// date can be in the past when a webhook is replayed or lands after midnight,
+	// so clamp to today (UTC — never behind a US warehouse's local date).
+	const orderDate = order.created.slice(0, 10);
+	const todayUtc = new Date().toISOString().slice(0, 10);
+	const shipDate = orderDate > todayUtc ? orderDate : todayUtc;
+
 	const items = order.lines.map((line) => ({
 		name: line.variantName
 			? `${line.productName} — ${line.variantName}`
@@ -138,7 +145,7 @@ export function mapSaleorOrderToShipstation(
 		external_shipment_id: shortOrderId,
 		external_order_id: shortOrderId,
 		order_number: order.number,
-		ship_date: order.created.slice(0, 10),
+		ship_date: shipDate,
 		create_sales_order: true,
 		warehouse_id: options.warehouseId,
 		shipment_status: "pending",
