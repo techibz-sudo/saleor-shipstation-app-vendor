@@ -9,6 +9,7 @@ import { createSaleorClient } from "@/lib/saleor/client";
 import { writeTrackingToSaleorOrder } from "@/lib/saleor/mutations";
 import { expandToSaleorOrderId } from "@/lib/saleor/order-id";
 import { shipstationClient, ShipstationApiError } from "@/lib/shipstation/client";
+import { carrierTrackingUrl } from "@/lib/shipstation/tracking-url";
 import {
 	shipstationLabelCreatedPayloadSchema,
 	type ResolvedShipmentTracking,
@@ -97,9 +98,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 			// reconstitute the full base64 form before calling Saleor's GraphQL.
 			const fullSaleorOrderId = expandToSaleorOrderId(tracking.saleorOrderId);
 
+			// Saleor has no carrier field, so encode the carrier as a tracking URL —
+			// the customer email renders URLs as clickable "track your package" links.
+			const trackingValue =
+				carrierTrackingUrl(tracking.carrierCode, tracking.trackingNumber) ??
+				tracking.trackingNumber;
+
 			const result = await writeTrackingToSaleorOrder(saleorClient, {
 				saleorOrderId: fullSaleorOrderId,
-				trackingNumber: tracking.trackingNumber,
+				trackingNumber: trackingValue,
 				notifyCustomer: true,
 			});
 
