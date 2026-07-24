@@ -10,6 +10,29 @@ frontend:
         - pnpm install --frozen-lockfile
     build:
       commands:
+        # Amplify exposes console env vars at build time but does not reliably inject
+        # server-only (non-NEXT_PUBLIC) vars into the Next.js SSR (Lambda) runtime.
+        # Persist each one EXPLICITLY into .env.production (single-quoted to stop
+        # dotenv-expand from mangling values containing '$'). Same pattern the
+        # storefront and SellAbroad apps use. Start the file fresh each build.
+        - ': > .env.production'
+        - "echo \"APL='${APL}'\" >> .env.production"
+        - "echo \"APP_API_BASE_URL='${APP_API_BASE_URL}'\" >> .env.production"
+        - "echo \"APP_IFRAME_BASE_URL='${APP_IFRAME_BASE_URL}'\" >> .env.production"
+        - "echo \"SALEOR_API_URL='${SALEOR_API_URL}'\" >> .env.production"
+        - "echo \"SALEOR_APP_ID='${SALEOR_APP_ID}'\" >> .env.production"
+        - "echo \"SALEOR_APP_TOKEN='${SALEOR_APP_TOKEN}'\" >> .env.production"
+        - "echo \"SHIPSTATION_API_KEY='${SHIPSTATION_API_KEY}'\" >> .env.production"
+        - "echo \"SHIPSTATION_WAREHOUSE_ID='${SHIPSTATION_WAREHOUSE_ID}'\" >> .env.production"
+        - "echo \"SHIPSTATION_WEBHOOK_TOKEN='${SHIPSTATION_WEBHOOK_TOKEN}'\" >> .env.production"
+        - "echo \"SHIPSTATION_WEBHOOK_HEADER='${SHIPSTATION_WEBHOOK_HEADER}'\" >> .env.production"
+        - "echo \"LOG_LEVEL='${LOG_LEVEL}'\" >> .env.production"
+        # Fail the build loudly if a critical value never reached the build env,
+        # instead of silently baking an empty value.
+        - 'test -n "${SALEOR_API_URL}" || { echo "FATAL: SALEOR_API_URL empty in build env"; exit 1; }'
+        - 'test -n "${SALEOR_APP_TOKEN}" || { echo "FATAL: SALEOR_APP_TOKEN empty in build env"; exit 1; }'
+        # Log only the variable NAMES (never values) for confirmation.
+        - 'echo "Keys written to .env.production:" && cut -d= -f1 .env.production | sort'
         - pnpm run build
   artifacts:
     baseDirectory: .next
