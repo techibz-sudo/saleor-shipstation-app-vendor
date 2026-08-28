@@ -3,7 +3,7 @@ import { AppManifest } from "@saleor/app-sdk/types";
 
 import packageJson from "../../../package.json";
 import { orderCancelledWebhook } from "./webhooks/saleor/order-cancelled";
-import { orderCreatedWebhook } from "./webhooks/saleor/order-created";
+import { orderFullyPaidWebhook } from "./webhooks/saleor/order-fully-paid";
 
 export default createManifestHandler({
 	async manifestFactory({ appBaseUrl }) {
@@ -19,7 +19,7 @@ export default createManifestHandler({
 			author: "InfinityBio Labs",
 			permissions: ["MANAGE_ORDERS"],
 			webhooks: [
-				orderCreatedWebhook.getWebhookManifest(apiBaseUrl),
+				orderFullyPaidWebhook.getWebhookManifest(apiBaseUrl),
 				orderCancelledWebhook.getWebhookManifest(apiBaseUrl),
 			],
 			extensions: [],
