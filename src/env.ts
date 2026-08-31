@@ -26,6 +26,18 @@ const envSchema = z
 		// Header name ShipStation should put the token in (configured into the v2 webhook
 		// at creation time via the `headers` array). Default keeps things obvious in logs.
 		SHIPSTATION_WEBHOOK_HEADER: z.string().default("x-webhook-token"),
+		// Manual-payment confirmation email. SMTP is used locally (Mailpit) and
+		// Resend is the production fallback when EMAIL_SMTP_HOST is unset.
+		EMAIL_SMTP_HOST: z.string().min(1).optional(),
+		EMAIL_SMTP_PORT: z.coerce.number().int().positive().default(1025),
+		EMAIL_SMTP_SECURE: z.string().optional(),
+		EMAIL_SMTP_USER: z.string().optional(),
+		EMAIL_SMTP_PASSWORD: z.string().optional(),
+		RESEND_API_KEY: z.string().min(1).optional(),
+		MANUAL_PAYMENT_FROM_EMAIL: z
+			.string()
+			.default("Infinity BioLabs Support <support@infinitybiolabs.com>"),
+		MANUAL_PAYMENT_SUPPORT_EMAIL: z.string().email().default("support@infinitybiolabs.com"),
 		LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
 	})
 	.superRefine((data, ctx) => {

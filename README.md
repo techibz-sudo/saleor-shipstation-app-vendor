@@ -69,6 +69,9 @@ See `.env.example` for the full list. Required for production:
 | `SHIPSTATION_API_KEY`        | ShipStation v2 API key (Account → API Settings). v2 uses a single key — no separate secret.                                      |
 | `SHIPSTATION_WEBHOOK_TOKEN`  | Shared secret. Generate with `openssl rand -hex 32`. Sent by ShipStation as a custom request header (default `x-webhook-token`). |
 | `SHIPSTATION_WEBHOOK_HEADER` | Optional. Header name ShipStation puts the token in. Default `x-webhook-token`.                                                  |
+| `RESEND_API_KEY`             | Required in production to send the manual-payment confirmation email after Saleor marks an order fully paid.                    |
+| `MANUAL_PAYMENT_FROM_EMAIL`  | Sender identity. Use `Infinity BioLabs Support <support@infinitybiolabs.com>`.                                                    |
+| `MANUAL_PAYMENT_SUPPORT_EMAIL` | Reply-to/support address. Use `support@infinitybiolabs.com`.                                                                    |
 | `LOG_LEVEL`                  | `info` (default) / `debug` / `trace`                                                                                             |
 
 ## Deploy to Vercel

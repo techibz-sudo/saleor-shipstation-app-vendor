@@ -6,6 +6,7 @@ import { saleorApp } from "@/saleor-app";
 import { createLogger } from "@/lib/logger";
 import { claimWebhookEvent, releaseWebhookEvent } from "@/lib/idempotency";
 import { shortenSaleorOrderId } from "@/lib/saleor/order-id";
+import { sendManualPaymentConfirmation } from "@/lib/email/manual-payment-confirmation";
 import { shipstationClient, ShipstationApiError } from "@/lib/shipstation/client";
 import {
 	mapSaleorOrderToShipstation,
@@ -21,6 +22,10 @@ const SUBSCRIPTION = gql`
 			number
 			created
 			customerNote
+			metadata {
+				key
+				value
+			}
 			userEmail
 			user {
 				email
@@ -80,6 +85,11 @@ const SUBSCRIPTION = gql`
 						amount
 					}
 				}
+				undiscountedUnitPrice {
+					gross {
+						amount
+					}
+				}
 				thumbnail {
 					url
 				}
@@ -120,6 +130,23 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 	}
 
 	logger.info("ORDER_FULLY_PAID received", { saleorOrderId: order.id, number: order.number });
+
+	const method = order.metadata?.find((entry) => entry.key === "manual_payment_method")?.value;
+	if (method === "cash_app" || method === "zelle" || method === "venmo") {
+		const emailClaimKey = `manual-payment-confirmed-email:${order.id}`;
+		if (await claimWebhookEvent(emailClaimKey)) {
+			const sent = await sendManualPaymentConfirmation(order, method);
+			if (!sent) {
+				await releaseWebhookEvent(emailClaimKey);
+				await releaseWebhookEvent(claimKey);
+				return res.status(502).json({
+					ok: false,
+					reason: "Manual-payment confirmation email could not be sent",
+				});
+			}
+		}
+	}
+
 	const warehouseId = env.SHIPSTATION_WAREHOUSE_ID;
 	if (!warehouseId) {
 		await releaseWebhookEvent(claimKey);
