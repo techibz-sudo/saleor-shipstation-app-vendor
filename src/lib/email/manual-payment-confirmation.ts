@@ -103,8 +103,9 @@ export function renderManualPaymentConfirmation(
 export async function sendManualPaymentConfirmation(
 	order: SaleorOrderForShipstation,
 	method: ManualPaymentMethod,
+	recipientEmail?: string | null,
 ): Promise<boolean> {
-	const to = order.userEmail ?? order.user?.email;
+	const to = recipientEmail || order.userEmail || order.user?.email;
 	if (!to) {
 		logger.error("Manual-payment order has no customer email", { orderId: order.id });
 		return false;
