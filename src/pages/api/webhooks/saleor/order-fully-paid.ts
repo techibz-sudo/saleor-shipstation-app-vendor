@@ -135,6 +135,17 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 
 	const method = order.metadata?.find((entry) => entry.key === "manual_payment_method")?.value;
 	const isManualPayment = method === "cash_app" || method === "zelle" || method === "venmo";
+	const storedCustomerEmail = order.metadata?.find(
+		(entry) => entry.key === "manual_payment_customer_email",
+	)?.value;
+	const customerEmail = storedCustomerEmail || order.userEmail || order.user?.email;
+	// Manual orders temporarily use a notification sink as Saleor's order email so
+	// its native order/payment messages do not reach the customer. Use the stored
+	// customer address for our email and ShipStation, then restore it below so later
+	// fulfillment and shipping messages continue normally.
+	const customerOrder = isManualPayment
+		? { ...order, userEmail: customerEmail ?? null }
+		: order;
 	const saleorApiUrl = requireSaleorApiUrl();
 	const authData = await saleorApp.apl.get(saleorApiUrl);
 	if (!authData) {
@@ -147,7 +158,7 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 	});
 	const confirmation = await confirmFullyPaidOrder(saleorClient, {
 		orderId: order.id,
-		customerEmail: order.userEmail ?? order.user?.email,
+		customerEmail,
 		// Manual payments use our branded confirmation below. Card orders keep
 		// Saleor's normal confirmation email.
 		suppressNativeEmail: isManualPayment,
@@ -165,7 +176,7 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 	if (isManualPayment) {
 		const emailClaimKey = `manual-payment-confirmed-email:${order.id}`;
 		if (await claimWebhookEvent(emailClaimKey)) {
-			const sent = await sendManualPaymentConfirmation(order, method);
+			const sent = await sendManualPaymentConfirmation(customerOrder, method, customerEmail);
 			if (!sent) {
 				await releaseWebhookEvent(emailClaimKey);
 				await releaseWebhookEvent(claimKey);
@@ -214,7 +225,7 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 		}
 
 		const result = await shipstationClient.createShipment(
-			mapSaleorOrderToShipstation(order, { warehouseId }),
+			mapSaleorOrderToShipstation(customerOrder, { warehouseId }),
 		);
 		logger.info("ShipStation v2 shipment created", {
 			saleorOrderId: order.id,
