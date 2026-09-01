@@ -29,6 +29,7 @@ frontend:
         - "echo \"RESEND_API_KEY='${RESEND_API_KEY}'\" >> .env.production"
         - "echo \"MANUAL_PAYMENT_FROM_EMAIL='${MANUAL_PAYMENT_FROM_EMAIL}'\" >> .env.production"
         - "echo \"MANUAL_PAYMENT_SUPPORT_EMAIL='${MANUAL_PAYMENT_SUPPORT_EMAIL}'\" >> .env.production"
+        - "echo \"MANUAL_PAYMENT_NOTIFICATION_SINK_EMAIL='${MANUAL_PAYMENT_NOTIFICATION_SINK_EMAIL}'\" >> .env.production"
         - "echo \"EMAIL_SMTP_HOST='${EMAIL_SMTP_HOST}'\" >> .env.production"
         - "echo \"EMAIL_SMTP_PORT='${EMAIL_SMTP_PORT}'\" >> .env.production"
         - "echo \"EMAIL_SMTP_SECURE='${EMAIL_SMTP_SECURE}'\" >> .env.production"

@@ -72,6 +72,7 @@ See `.env.example` for the full list. Required for production:
 | `RESEND_API_KEY`             | Required in production to send the manual-payment confirmation email after Saleor marks an order fully paid.                    |
 | `MANUAL_PAYMENT_FROM_EMAIL`  | Sender identity. Use `Infinity BioLabs Support <support@infinitybiolabs.com>`.                                                    |
 | `MANUAL_PAYMENT_SUPPORT_EMAIL` | Reply-to/support address. Use `support@infinitybiolabs.com`.                                                                    |
+| `MANUAL_PAYMENT_NOTIFICATION_SINK_EMAIL` | Internal sink used while confirming manual orders so customers receive only the branded confirmation. |
 | `LOG_LEVEL`                  | `info` (default) / `debug` / `trace`                                                                                             |
 
 ## Deploy to Vercel

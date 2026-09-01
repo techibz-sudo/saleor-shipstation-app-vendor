@@ -38,6 +38,10 @@ const envSchema = z
 			.string()
 			.default("Infinity BioLabs Support <support@infinitybiolabs.com>"),
 		MANUAL_PAYMENT_SUPPORT_EMAIL: z.string().email().default("support@infinitybiolabs.com"),
+		MANUAL_PAYMENT_NOTIFICATION_SINK_EMAIL: z
+			.string()
+			.email()
+			.default("manual-payments@infinitybiolabs.com"),
 		LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
 	})
 	.superRefine((data, ctx) => {

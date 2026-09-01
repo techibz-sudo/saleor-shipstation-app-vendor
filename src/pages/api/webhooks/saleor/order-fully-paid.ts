@@ -1,11 +1,13 @@
 import { SaleorAsyncWebhook } from "@saleor/app-sdk/handlers/next";
 import gql from "graphql-tag";
 
-import { env } from "@/env";
+import { env, requireSaleorApiUrl } from "@/env";
 import { saleorApp } from "@/saleor-app";
 import { createLogger } from "@/lib/logger";
 import { claimWebhookEvent, releaseWebhookEvent } from "@/lib/idempotency";
 import { shortenSaleorOrderId } from "@/lib/saleor/order-id";
+import { createSaleorClient } from "@/lib/saleor/client";
+import { confirmFullyPaidOrder } from "@/lib/saleor/mutations";
 import { sendManualPaymentConfirmation } from "@/lib/email/manual-payment-confirmation";
 import { shipstationClient, ShipstationApiError } from "@/lib/shipstation/client";
 import {
@@ -132,7 +134,35 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 	logger.info("ORDER_FULLY_PAID received", { saleorOrderId: order.id, number: order.number });
 
 	const method = order.metadata?.find((entry) => entry.key === "manual_payment_method")?.value;
-	if (method === "cash_app" || method === "zelle" || method === "venmo") {
+	const isManualPayment = method === "cash_app" || method === "zelle" || method === "venmo";
+	const saleorApiUrl = requireSaleorApiUrl();
+	const authData = await saleorApp.apl.get(saleorApiUrl);
+	if (!authData) {
+		await releaseWebhookEvent(claimKey);
+		return res.status(500).json({ ok: false, reason: "Saleor app authentication is unavailable" });
+	}
+	const saleorClient = createSaleorClient({
+		saleorApiUrl: authData.saleorApiUrl,
+		token: authData.token,
+	});
+	const confirmation = await confirmFullyPaidOrder(saleorClient, {
+		orderId: order.id,
+		customerEmail: order.userEmail ?? order.user?.email,
+		// Manual payments use our branded confirmation below. Card orders keep
+		// Saleor's normal confirmation email.
+		suppressNativeEmail: isManualPayment,
+		notificationSinkEmail: env.MANUAL_PAYMENT_NOTIFICATION_SINK_EMAIL,
+	});
+	if (!confirmation.ok) {
+		await releaseWebhookEvent(claimKey);
+		logger.error("Unable to confirm fully paid Saleor order", {
+			saleorOrderId: order.id,
+			reason: confirmation.reason,
+		});
+		return res.status(502).json({ ok: false, reason: confirmation.reason });
+	}
+
+	if (isManualPayment) {
 		const emailClaimKey = `manual-payment-confirmed-email:${order.id}`;
 		if (await claimWebhookEvent(emailClaimKey)) {
 			const sent = await sendManualPaymentConfirmation(order, method);
