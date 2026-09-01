@@ -5,6 +5,7 @@
 	"description": "Saleor app that pushes orders to ShipStation and writes tracking back when shipments are dispatched.",
 	"license": "BSD-3-Clause",
 	"scripts": {
+		"sync:saleor-webhooks": "node scripts/sync-saleor-webhooks.mjs",
 		"dev": "next dev --port 3100",
 		"build": "next build",
 		"start": "next start --port 3100",
