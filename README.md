@@ -7,9 +7,9 @@ A Saleor app that pushes orders to ShipStation and writes tracking back to Saleo
 ## Architecture
 
 ```
-[Saleor] ORDER_CREATED webhook
+[Saleor] ORDER_FULLY_PAID webhook
    ↓
-[App] POST /api/webhooks/saleor/order-created   (JWT-verified by @saleor/app-sdk)
+[App] POST /api/webhooks/saleor/order-fully-paid   (JWT-verified by @saleor/app-sdk)
    ↓
 [App] → ShipStation v2: POST /v2/shipments
         external_shipment_id = Saleor order UUID
@@ -38,34 +38,42 @@ Shipments"** store filter (ShipStation auto-creates this store the first
 time an API-pushed shipment arrives). Each entry is a Saleor order ready
 for label purchase. Pin or bookmark the filtered view.
 
+Only fully paid Saleor orders are sent. Cash App, Zelle, and Venmo orders stay
+out of ShipStation until an operator verifies the external transfer and marks
+the Saleor order paid.
+
 No ShipStation Custom Store / XML feed / store_id configuration is
 required — ShipStation handles the auto-store assignment internally for
 shipments created via the v2 API with `create_sales_order: true`.
 
 ## Endpoints
 
-| Path | Auth | Caller |
-|---|---|---|
-| `GET /api/manifest` | none (public) | Saleor (during install) |
-| `POST /api/register` | Saleor JWT | Saleor (during install) |
-| `POST /api/webhooks/saleor/order-created` | Saleor JWT (handled by SDK) | Saleor |
-| `POST /api/shipstation/shipnotify` | shared-secret custom header | ShipStation v2 |
+| Path                                         | Auth                        | Caller                  |
+| -------------------------------------------- | --------------------------- | ----------------------- |
+| `GET /api/manifest`                          | none (public)               | Saleor (during install) |
+| `POST /api/register`                         | Saleor JWT                  | Saleor (during install) |
+| `POST /api/webhooks/saleor/order-fully-paid` | Saleor JWT (handled by SDK) | Saleor                  |
+| `POST /api/shipstation/shipnotify`           | shared-secret custom header | ShipStation v2          |
 
 ## Environment
 
 See `.env.example` for the full list. Required for production:
 
-| Variable | Purpose |
-|---|---|
-| `APP_API_BASE_URL` | Public HTTPS URL the app is reachable at (Vercel deployment URL or custom domain) |
-| `SALEOR_API_URL` | Restricts which Saleor may install the app. `https://api.infinitybiolabs.com/graphql/` for prod. |
-| `APL` | `upstash` on Vercel; `file` for local dev only |
-| `UPSTASH_URL` | Required when `APL=upstash`. From upstash.com → your DB → REST API |
-| `UPSTASH_TOKEN` | Required when `APL=upstash`. Same screen |
-| `SHIPSTATION_API_KEY` | ShipStation v2 API key (Account → API Settings). v2 uses a single key — no separate secret. |
-| `SHIPSTATION_WEBHOOK_TOKEN` | Shared secret. Generate with `openssl rand -hex 32`. Sent by ShipStation as a custom request header (default `x-webhook-token`). |
-| `SHIPSTATION_WEBHOOK_HEADER` | Optional. Header name ShipStation puts the token in. Default `x-webhook-token`. |
-| `LOG_LEVEL` | `info` (default) / `debug` / `trace` |
+| Variable                     | Purpose                                                                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_API_BASE_URL`           | Public HTTPS URL the app is reachable at (Vercel deployment URL or custom domain)                                                |
+| `SALEOR_API_URL`             | Restricts which Saleor may install the app. `https://api.infinitybiolabs.com/graphql/` for prod.                                 |
+| `APL`                        | `upstash` on Vercel; `file` for local dev only                                                                                   |
+| `UPSTASH_URL`                | Required when `APL=upstash`. From upstash.com → your DB → REST API                                                               |
+| `UPSTASH_TOKEN`              | Required when `APL=upstash`. Same screen                                                                                         |
+| `SHIPSTATION_API_KEY`        | ShipStation v2 API key (Account → API Settings). v2 uses a single key — no separate secret.                                      |
+| `SHIPSTATION_WEBHOOK_TOKEN`  | Shared secret. Generate with `openssl rand -hex 32`. Sent by ShipStation as a custom request header (default `x-webhook-token`). |
+| `SHIPSTATION_WEBHOOK_HEADER` | Optional. Header name ShipStation puts the token in. Default `x-webhook-token`.                                                  |
+| `RESEND_API_KEY`             | Required in production to send the manual-payment confirmation email after Saleor marks an order fully paid.                    |
+| `MANUAL_PAYMENT_FROM_EMAIL`  | Sender identity. Use `Infinity BioLabs Support <support@infinitybiolabs.com>`.                                                    |
+| `MANUAL_PAYMENT_SUPPORT_EMAIL` | Reply-to/support address. Use `support@infinitybiolabs.com`.                                                                    |
+| `MANUAL_PAYMENT_NOTIFICATION_SINK_EMAIL` | Internal sink used while confirming manual orders so customers receive only the branded confirmation. |
+| `LOG_LEVEL`                  | `info` (default) / `debug` / `trace`                                                                                             |
 
 ## Deploy to Vercel
 
@@ -136,9 +144,9 @@ See `.env.example` for the full list. Required for production:
 
 - **Single-tenant by design (Phase 1).** The shipnotify handler picks the first APL entry; multi-Saleor installs will need a store-id-to-saleor mapping.
 - **Saleor order id is stored in two places** on the ShipStation order: as `orderKey` (canonical) and as `customField1` (human-readable, `saleor:<order-id>`). The shipnotify handler reads `orderKey` to route tracking back.
-- **Idempotency:** ShipStation deduplicates `createorder` by `orderNumber` + `orderKey`. Re-firing the Saleor `ORDER_CREATED` webhook is safe.
+- **Idempotency:** Before creating a shipment, the app looks it up by the Saleor order's external id. Re-firing `ORDER_FULLY_PAID` is safe across app instances.
 - **Warehouse selection:** If the order has no existing fulfillment, the app creates one using all unfulfilled lines without specifying a warehouse. Saleor will pick the default. Override in code if your setup needs explicit routing.
-- **Cold starts on Vercel:** First invocation after idle adds ~500ms–1s. Fine for ORDER_CREATED (async, Saleor retries) and SHIP_NOTIFY (one-shot, ShipStation retries on 5xx).
+- **Cold starts on Vercel:** First invocation after idle adds ~500ms–1s. Fine for ORDER_FULLY_PAID (async, Saleor retries) and SHIP_NOTIFY (one-shot, ShipStation retries on 5xx).
 
 ## Local development
 

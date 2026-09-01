@@ -26,11 +26,21 @@ frontend:
         - "echo \"SHIPSTATION_WAREHOUSE_ID='${SHIPSTATION_WAREHOUSE_ID}'\" >> .env.production"
         - "echo \"SHIPSTATION_WEBHOOK_TOKEN='${SHIPSTATION_WEBHOOK_TOKEN}'\" >> .env.production"
         - "echo \"SHIPSTATION_WEBHOOK_HEADER='${SHIPSTATION_WEBHOOK_HEADER}'\" >> .env.production"
+        - "echo \"RESEND_API_KEY='${RESEND_API_KEY}'\" >> .env.production"
+        - "echo \"MANUAL_PAYMENT_FROM_EMAIL='${MANUAL_PAYMENT_FROM_EMAIL}'\" >> .env.production"
+        - "echo \"MANUAL_PAYMENT_SUPPORT_EMAIL='${MANUAL_PAYMENT_SUPPORT_EMAIL}'\" >> .env.production"
+        - "echo \"MANUAL_PAYMENT_NOTIFICATION_SINK_EMAIL='${MANUAL_PAYMENT_NOTIFICATION_SINK_EMAIL}'\" >> .env.production"
+        - "echo \"EMAIL_SMTP_HOST='${EMAIL_SMTP_HOST}'\" >> .env.production"
+        - "echo \"EMAIL_SMTP_PORT='${EMAIL_SMTP_PORT}'\" >> .env.production"
+        - "echo \"EMAIL_SMTP_SECURE='${EMAIL_SMTP_SECURE}'\" >> .env.production"
+        - "echo \"EMAIL_SMTP_USER='${EMAIL_SMTP_USER}'\" >> .env.production"
+        - "echo \"EMAIL_SMTP_PASSWORD='${EMAIL_SMTP_PASSWORD}'\" >> .env.production"
         - "echo \"LOG_LEVEL='${LOG_LEVEL}'\" >> .env.production"
         # Fail the build loudly if a critical value never reached the build env,
         # instead of silently baking an empty value.
         - 'test -n "${SALEOR_API_URL}" || { echo "FATAL: SALEOR_API_URL empty in build env"; exit 1; }'
         - 'test -n "${SALEOR_APP_TOKEN}" || { echo "FATAL: SALEOR_APP_TOKEN empty in build env"; exit 1; }'
+        - 'test -n "${RESEND_API_KEY}${EMAIL_SMTP_HOST}" || { echo "FATAL: configure RESEND_API_KEY or EMAIL_SMTP_HOST for payment confirmations"; exit 1; }'
         # Log only the variable NAMES (never values) for confirmation.
         - 'echo "Keys written to .env.production:" && cut -d= -f1 .env.production | sort'
         - pnpm run build

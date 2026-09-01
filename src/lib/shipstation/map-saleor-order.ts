@@ -24,10 +24,12 @@ export interface SaleorOrderForShipstation {
 		variantName: string | null;
 		quantity: number;
 		unitPrice: { gross: { amount: number } };
+		undiscountedUnitPrice?: { gross: { amount: number } };
 		thumbnail: { url: string } | null;
 	}>;
 	shippingMethodName?: string | null;
 	customerNote?: string | null;
+	metadata?: Array<{ key: string; value: string }>;
 }
 
 export interface SaleorAddress {

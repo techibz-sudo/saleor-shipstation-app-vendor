@@ -4,6 +4,124 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger("saleor:mutations");
 
+const ORDER_CONFIRMATION_STATE_QUERY = gql`
+	query OrderConfirmationState($id: ID!) {
+		order(id: $id) {
+			id
+			status
+			userEmail
+		}
+	}
+`;
+
+const ORDER_EMAIL_UPDATE_MUTATION = gql`
+	mutation OrderEmailUpdate($id: ID!, $input: OrderUpdateInput!) {
+		orderUpdate(id: $id, input: $input) {
+			order {
+				id
+				userEmail
+			}
+			errors {
+				field
+				code
+				message
+			}
+		}
+	}
+`;
+
+const ORDER_CONFIRM_MUTATION = gql`
+	mutation ConfirmPaidOrder($id: ID!) {
+		orderConfirm(id: $id) {
+			order {
+				id
+				status
+			}
+			errors {
+				field
+				code
+				message
+			}
+		}
+	}
+`;
+
+export async function confirmFullyPaidOrder(
+	client: Client,
+	args: {
+		orderId: string;
+		customerEmail?: string | null;
+		suppressNativeEmail?: boolean;
+		notificationSinkEmail?: string;
+	},
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+	const loaded = await client
+		.query<{
+			order: { id: string; status: string; userEmail: string | null } | null;
+		}>(ORDER_CONFIRMATION_STATE_QUERY, { id: args.orderId })
+		.toPromise();
+	if (loaded.error || !loaded.data?.order) {
+		return { ok: false, reason: loaded.error?.message ?? "Saleor order not found" };
+	}
+	const originalEmail = args.customerEmail || loaded.data.order.userEmail;
+	const updateEmail = async (userEmail: string) => {
+		const result = await client
+			.mutation<{
+				orderUpdate: {
+					order: { id: string } | null;
+					errors: Array<{ code: string; message: string | null }>;
+				};
+			}>(ORDER_EMAIL_UPDATE_MUTATION, { id: args.orderId, input: { userEmail } })
+			.toPromise();
+		const errors = result.data?.orderUpdate.errors ?? [];
+		return (
+			result.error?.message || errors.map((error) => error.message || error.code).join("; ") || null
+		);
+	};
+	if (loaded.data.order.status !== "UNCONFIRMED") {
+		if (
+			args.suppressNativeEmail &&
+			originalEmail &&
+			loaded.data.order.userEmail !== originalEmail
+		) {
+			const restoreError = await updateEmail(originalEmail);
+			if (restoreError)
+				return { ok: false, reason: `Unable to restore customer email: ${restoreError}` };
+		}
+		return { ok: true };
+	}
+
+	if (args.suppressNativeEmail && originalEmail) {
+		const error = await updateEmail(
+			args.notificationSinkEmail || "manual-payments@infinitybiolabs.com",
+		);
+		if (error)
+			return { ok: false, reason: `Unable to suppress duplicate confirmation email: ${error}` };
+	}
+
+	const confirmed = await client
+		.mutation<{
+			orderConfirm: {
+				order: { id: string } | null;
+				errors: Array<{ code: string; message: string | null }>;
+			};
+		}>(ORDER_CONFIRM_MUTATION, { id: args.orderId })
+		.toPromise();
+	const confirmationErrors = confirmed.data?.orderConfirm.errors ?? [];
+	const confirmationError =
+		confirmed.error?.message ||
+		confirmationErrors.map((error) => error.message || error.code).join("; ") ||
+		(!confirmed.data?.orderConfirm.order ? "Saleor returned no confirmed order" : null);
+
+	if (args.suppressNativeEmail && originalEmail) {
+		const restoreError = await updateEmail(originalEmail);
+		if (restoreError)
+			return { ok: false, reason: `Unable to restore customer email: ${restoreError}` };
+	}
+	if (confirmationError) return { ok: false, reason: confirmationError };
+	return { ok: true };
+}
+
 /**
  * Looks up the latest fulfillment for an order and creates one if none exists, so we
  * can attach tracking. Saleor's order.fulfillments field is empty until we (or the
@@ -117,7 +235,9 @@ export async function writeTrackingToSaleorOrder(
 	client: Client,
 	{ saleorOrderId, trackingNumber, notifyCustomer }: WriteTrackingArgs,
 ): Promise<{ ok: true; fulfillmentId: string } | { ok: false; reason: string }> {
-	const orderResult = await client.query<OrderQueryResult>(ORDER_BY_ID_QUERY, { id: saleorOrderId }).toPromise();
+	const orderResult = await client
+		.query<OrderQueryResult>(ORDER_BY_ID_QUERY, { id: saleorOrderId })
+		.toPromise();
 
 	if (orderResult.error || !orderResult.data?.order) {
 		const reason = orderResult.error?.message ?? "Saleor order not found";
