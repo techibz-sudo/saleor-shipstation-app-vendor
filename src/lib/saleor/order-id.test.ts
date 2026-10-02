@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { expandToSaleorOrderId, shortenSaleorOrderId } from "./order-id";
+import {
+	expandToSaleorOrderId,
+	parseShipstationSaleorOrderId,
+	shortenSaleorOrderId,
+} from "./order-id";
 
 describe("Saleor order id round-trip", () => {
 	it("shortens a modern UUID-style Saleor order id to fit ShipStation's 50-char cap", () => {
@@ -36,4 +40,17 @@ describe("Saleor order id round-trip", () => {
 		// Decode and check
 		expect(Buffer.from(encoded, "base64").toString("utf8")).toBe(`Order:${uuid}`);
 	});
+
+	it("accepts a bare UUID Saleor key", () => {
+		const fullId = "T3JkZXI6OTMzOWNkMzctZTczMC00NDY3LTgzNWUtZWEwMmYyN2UzMDAx";
+
+		expect(parseShipstationSaleorOrderId("9339cd37-e730-4467-835e-ea02f27e3001")).toBe(fullId);
+	});
+
+	it.each(["113-2646396-6273022", "25-12345-67890", "576460752303423488", "not-a-saleor-order"])(
+		"rejects non-Saleor marketplace identifier %s",
+		(identifier) => {
+			expect(parseShipstationSaleorOrderId(identifier)).toBeNull();
+		},
+	);
 });
