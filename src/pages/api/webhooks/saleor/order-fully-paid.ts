@@ -10,6 +10,7 @@ import { createSaleorClient } from "@/lib/saleor/client";
 import { confirmFullyPaidOrder } from "@/lib/saleor/mutations";
 import { sendManualPaymentConfirmation } from "@/lib/email/manual-payment-confirmation";
 import { shipstationClient, ShipstationApiError } from "@/lib/shipstation/client";
+import { syncSaleorCustomerToShipstationV1 } from "@/lib/shipstation/v1-customer-sync";
 import {
 	mapSaleorOrderToShipstation,
 	type SaleorOrderForShipstation,
@@ -213,26 +214,40 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 	try {
 		const externalId = shortenSaleorOrderId(order.id);
 		const existing = await shipstationClient.getShipmentByExternalId(externalId);
+
+		const shipment =
+			existing ??
+			(await shipstationClient.createShipment(
+				mapSaleorOrderToShipstation(customerOrder, { warehouseId }),
+			));
+
 		if (existing) {
 			logger.info("ShipStation shipment already exists", {
 				saleorOrderId: order.id,
-				shipstationShipmentId: existing.shipment_id,
+				shipstationShipmentId: shipment.shipment_id,
 			});
-			return res.status(200).json({
-				ok: true,
-				deduplicated: true,
-				shipstationShipmentId: existing.shipment_id,
+		} else {
+			logger.info("ShipStation v2 shipment created", {
+				saleorOrderId: order.id,
+				shipstationShipmentId: shipment.shipment_id,
 			});
 		}
 
-		const result = await shipstationClient.createShipment(
-			mapSaleorOrderToShipstation(customerOrder, { warehouseId }),
-		);
-		logger.info("ShipStation v2 shipment created", {
+		const customerSync = await syncSaleorCustomerToShipstationV1(customerOrder);
+
+		logger.info("ShipStation customer sync completed", {
 			saleorOrderId: order.id,
-			shipstationShipmentId: result.shipment_id,
+			shipstationOrderId: customerSync.orderId,
+			customerUpdated: customerSync.updated,
 		});
-		return res.status(200).json({ ok: true, shipstationShipmentId: result.shipment_id });
+
+		return res.status(200).json({
+			ok: true,
+			deduplicated: Boolean(existing),
+			shipstationShipmentId: shipment.shipment_id,
+			shipstationOrderId: customerSync.orderId,
+			customerUpdated: customerSync.updated,
+		});
 	} catch (error) {
 		if (error instanceof ShipstationApiError) {
 			logger.error("ShipStation API rejected the paid order", {
@@ -240,14 +255,20 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 				status: error.status,
 				reason: error.message,
 			});
-			const permanent = error.status >= 400 && error.status < 500;
+
+			const retryableStatus =
+				error.status === 401 || error.status === 403 || error.status === 429 || error.status >= 500;
+			const permanent = error.status >= 400 && error.status < 500 && !retryableStatus;
+
 			if (!permanent) await releaseWebhookEvent(claimKey);
+
 			return res.status(permanent ? 200 : 502).json({
 				ok: false,
 				reason: error.message,
 				ackedDespiteFailure: permanent,
 			});
 		}
+
 		await releaseWebhookEvent(claimKey);
 		logger.error("Unhandled error in ORDER_FULLY_PAID handler", {
 			saleorOrderId: order.id,
