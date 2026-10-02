@@ -139,25 +139,43 @@ describe("syncSaleorCustomerToShipstationV1", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("skips an order that is already linked to the same customer", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					orders: [
-						{
-							orderId: 123,
-							orderNumber: "1001",
-							orderKey: "1",
-							customerUsername: "ada@example.com",
-						},
-					],
-				}),
-				{
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				},
-			),
-		);
+	it("updates an exact order even when its username already matches", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						orders: [
+							{
+								orderId: 123,
+								orderNumber: "1001",
+								orderKey: "1",
+								customerUsername: "ada@example.com",
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						orderId: 123,
+						orderNumber: "1001",
+						orderKey: "1",
+						customerId: 456,
+						customerUsername: "ada@example.com",
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			);
+
 		vi.stubGlobal("fetch", fetchMock);
 
 		const { syncSaleorCustomerToShipstationV1 } = await import("./v1-customer-sync");
@@ -166,9 +184,10 @@ describe("syncSaleorCustomerToShipstationV1", () => {
 
 		expect(result).toEqual({
 			orderId: 123,
-			updated: false,
+			updated: true,
+			customerId: 456,
 		});
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
 	it("updates a verified existing order with the customer identifier", async () => {

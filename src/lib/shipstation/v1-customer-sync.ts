@@ -304,13 +304,6 @@ export async function syncSaleorCustomerToShipstationV1(
 		);
 	}
 
-	if (existing.customerUsername?.trim().toLowerCase() === input.customerUsername) {
-		return {
-			orderId: existing.orderId,
-			updated: false,
-		};
-	}
-
 	const updatePayload = await requestV1("/orders/createorder", {
 		method: "POST",
 		body: input,
