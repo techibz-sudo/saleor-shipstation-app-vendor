@@ -23,6 +23,8 @@ const envSchema = z
 		SALEOR_APP_ID: optionalString,
 		// ShipStation v2 uses a single API key — no separate secret.
 		SHIPSTATION_API_KEY: optionalString,
+		SHIPSTATION_V1_API_KEY: optionalString,
+		SHIPSTATION_V1_API_SECRET: optionalString,
 		// Warehouse to bind new shipments to (provides the ship_from address).
 		// Fetch with: curl -H "api-key: $KEY" https://api.shipstation.com/v2/warehouses
 		// Required for the v2 /shipments POST — without it (and without an explicit
@@ -83,6 +85,22 @@ export function requireShipstationApiKey(): string {
 		throw new Error("SHIPSTATION_API_KEY must be set before calling the ShipStation API.");
 	}
 	return env.SHIPSTATION_API_KEY;
+}
+
+export function requireShipstationV1Credentials(): {
+	apiKey: string;
+	apiSecret: string;
+}{
+	if (!env.SHIPSTATION_V1_API_KEY || !env.SHIPSTATION_V1_API_SECRET) {
+		throw new Error(
+			"SHIPSTATION_V1_API_KEY and SHIPSTATION_V1_API_SECRET must be set before calling the ShipStation V1.",
+		);
+	}
+
+	return {
+		apiKey: env.SHIPSTATION_V1_API_KEY,
+		apiSecret: env.SHIPSTATION_V1_API_SECRET,
+	}
 }
 
 export function requireShipnotifyToken() {
