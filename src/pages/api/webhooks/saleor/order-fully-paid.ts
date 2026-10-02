@@ -143,9 +143,7 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 	// its native order/payment messages do not reach the customer. Use the stored
 	// customer address for our email and ShipStation, then restore it below so later
 	// fulfillment and shipping messages continue normally.
-	const customerOrder = isManualPayment
-		? { ...order, userEmail: customerEmail ?? null }
-		: order;
+	const customerOrder = isManualPayment ? { ...order, userEmail: customerEmail ?? null } : order;
 	const saleorApiUrl = requireSaleorApiUrl();
 	const authData = await saleorApp.apl.get(saleorApiUrl);
 	if (!authData) {
@@ -191,9 +189,12 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 	const warehouseId = env.SHIPSTATION_WAREHOUSE_ID;
 	if (!warehouseId) {
 		if (!env.SHIPSTATION_API_KEY) {
-			logger.warn("ShipStation is disabled in this environment; paid-order processing completed without shipment creation", {
-				saleorOrderId: order.id,
-			});
+			logger.warn(
+				"ShipStation is disabled in this environment; paid-order processing completed without shipment creation",
+				{
+					saleorOrderId: order.id,
+				},
+			);
 			return res.status(200).json({
 				ok: true,
 				shipstationSkipped: true,
