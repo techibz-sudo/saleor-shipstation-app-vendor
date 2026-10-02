@@ -7,7 +7,7 @@ import { claimWebhookEvent, releaseWebhookEvent } from "@/lib/idempotency";
 import { createLogger } from "@/lib/logger";
 import { createSaleorClient } from "@/lib/saleor/client";
 import { writeTrackingToSaleorOrder } from "@/lib/saleor/mutations";
-import { expandToSaleorOrderId } from "@/lib/saleor/order-id";
+import { parseShipstationSaleorOrderId } from "@/lib/saleor/order-id";
 import { shipstationClient, ShipstationApiError } from "@/lib/shipstation/client";
 import { carrierTrackingUrl } from "@/lib/shipstation/tracking-url";
 import {
@@ -94,9 +94,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 				continue;
 			}
 
-			// We shortened the Saleor ID on the outbound push (50-char ShipStation cap);
-			// reconstitute the full base64 form before calling Saleor's GraphQL.
-			const fullSaleorOrderId = expandToSaleorOrderId(tracking.saleorOrderId);
+			// resolveTrackingFromPayload has already verified this belongs to Saleor and
+			// converted it back to the complete Saleor GraphQL order ID.
+			const fullSaleorOrderId = tracking.saleorOrderId;
 
 			// Saleor has no carrier field, so encode the carrier as a tracking URL —
 			// the customer email renders URLs as clickable "track your package" links.
@@ -161,11 +161,21 @@ async function resolveTrackingFromPayload(
 		return { ok: false, status: 200, reason: "voided" };
 	}
 
-	const inlineSaleorOrderId = payload.data?.external_shipment_id ?? null;
+	const inlineExternalOrderId = payload.data?.external_shipment_id ?? null;
 	const inlineTrackingNumber = payload.data?.tracking_number ?? null;
 
 	// Fast path: v2 webhooks may include the data inline.
-	if (inlineSaleorOrderId && inlineTrackingNumber) {
+	if (inlineExternalOrderId && inlineTrackingNumber) {
+		const inlineSaleorOrderId = parseShipstationSaleorOrderId(inlineExternalOrderId);
+
+		if (!inlineSaleorOrderId) {
+			logger.info("Ignoring tracking webhook for a non-Saleor shipment", {
+				externalShipmentId: inlineExternalOrderId,
+				shipmentId: payload.data?.shipment_id,
+			});
+			return { ok: false, status: 200, reason: "non_saleor_shipment" };
+		}
+
 		return {
 			ok: true,
 			values: [
@@ -183,7 +193,7 @@ async function resolveTrackingFromPayload(
 	// Otherwise resolve via resource_url, which for label_created_v2 points at
 	// `/labels?batch_id=…` and can return multiple labels.
 	if (!payload.resource_url) {
-		const reason = !inlineSaleorOrderId ? "missing_external_shipment_id" : "no_tracking_number";
+		const reason = !inlineExternalOrderId ? "missing_external_shipment_id" : "no_tracking_number";
 		logger.warn("Webhook payload has no resource_url and incomplete inline data", { reason });
 		return { ok: false, status: 200, reason };
 	}
@@ -206,16 +216,27 @@ async function resolveTrackingFromPayload(
 	const values: ResolvedShipmentTracking[] = [];
 	for (const label of labels) {
 		if (label.voided) continue;
-		const saleorOrderId = label.external_shipment_id ?? inlineSaleorOrderId ?? null;
+		const externalOrderId = label.external_shipment_id ?? inlineExternalOrderId ?? null;
 		const trackingNumber = label.tracking_number ?? inlineTrackingNumber ?? null;
-		if (!saleorOrderId || !trackingNumber) {
+		if (!externalOrderId || !trackingNumber) {
 			logger.warn("Skipping label with insufficient data for tracking writeback", {
 				labelId: label.label_id,
-				hasExternalShipmentId: Boolean(saleorOrderId),
+				hasExternalShipmentId: Boolean(externalOrderId),
 				hasTrackingNumber: Boolean(trackingNumber),
 			});
 			continue;
 		}
+
+		const saleorOrderId = parseShipstationSaleorOrderId(externalOrderId);
+		if (!saleorOrderId) {
+			logger.info("Ignoring label for a non-Saleor shipment", {
+				labelId: label.label_id,
+				externalShipmentId: externalOrderId,
+				shipmentId: label.shipment_id,
+			});
+			continue;
+		}
+
 		values.push({
 			saleorOrderId,
 			trackingNumber,
