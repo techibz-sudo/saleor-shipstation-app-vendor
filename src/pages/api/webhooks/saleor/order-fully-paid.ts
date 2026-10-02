@@ -5,16 +5,12 @@ import { env, requireSaleorApiUrl } from "@/env";
 import { saleorApp } from "@/saleor-app";
 import { createLogger } from "@/lib/logger";
 import { claimWebhookEvent, releaseWebhookEvent } from "@/lib/idempotency";
-import { shortenSaleorOrderId } from "@/lib/saleor/order-id";
 import { createSaleorClient } from "@/lib/saleor/client";
 import { confirmFullyPaidOrder } from "@/lib/saleor/mutations";
 import { sendManualPaymentConfirmation } from "@/lib/email/manual-payment-confirmation";
-import { shipstationClient, ShipstationApiError } from "@/lib/shipstation/client";
+import { ShipstationApiError } from "@/lib/shipstation/client";
 import { syncSaleorCustomerToShipstationV1 } from "@/lib/shipstation/v1-customer-sync";
-import {
-	mapSaleorOrderToShipstation,
-	type SaleorOrderForShipstation,
-} from "@/lib/shipstation/map-saleor-order";
+import type { SaleorOrderForShipstation } from "@/lib/shipstation/map-saleor-order";
 
 const logger = createLogger("webhook:order-fully-paid");
 
@@ -186,67 +182,19 @@ export default orderFullyPaidWebhook.createHandler(async (req, res, ctx) => {
 			}
 		}
 	}
-
-	const warehouseId = env.SHIPSTATION_WAREHOUSE_ID;
-	if (!warehouseId) {
-		if (!env.SHIPSTATION_API_KEY) {
-			logger.warn(
-				"ShipStation is disabled in this environment; paid-order processing completed without shipment creation",
-				{
-					saleorOrderId: order.id,
-				},
-			);
-			return res.status(200).json({
-				ok: true,
-				shipstationSkipped: true,
-				reason: "ShipStation is disabled in this environment",
-			});
-		}
-		await releaseWebhookEvent(claimKey);
-		logger.error("SHIPSTATION_WAREHOUSE_ID not set — shipment creation is disabled", {
-			saleorOrderId: order.id,
-		});
-		return res
-			.status(500)
-			.json({ ok: false, reason: "SHIPSTATION_WAREHOUSE_ID is not configured" });
-	}
-
 	try {
-		const externalId = shortenSaleorOrderId(order.id);
-		const existing = await shipstationClient.getShipmentByExternalId(externalId);
+		const orderSync = await syncSaleorCustomerToShipstationV1(customerOrder);
 
-		const shipment =
-			existing ??
-			(await shipstationClient.createShipment(
-				mapSaleorOrderToShipstation(customerOrder, { warehouseId }),
-			));
-
-		if (existing) {
-			logger.info("ShipStation shipment already exists", {
-				saleorOrderId: order.id,
-				shipstationShipmentId: shipment.shipment_id,
-			});
-		} else {
-			logger.info("ShipStation v2 shipment created", {
-				saleorOrderId: order.id,
-				shipstationShipmentId: shipment.shipment_id,
-			});
-		}
-
-		const customerSync = await syncSaleorCustomerToShipstationV1(customerOrder);
-
-		logger.info("ShipStation customer sync completed", {
+		logger.info("ShipStation V1 order and customer synchronized", {
 			saleorOrderId: order.id,
-			shipstationOrderId: customerSync.orderId,
-			customerUpdated: customerSync.updated,
+			shipstationOrderId: orderSync.orderId,
+			customerUpdated: orderSync.updated,
 		});
 
 		return res.status(200).json({
 			ok: true,
-			deduplicated: Boolean(existing),
-			shipstationShipmentId: shipment.shipment_id,
-			shipstationOrderId: customerSync.orderId,
-			customerUpdated: customerSync.updated,
+			shipstationOrderId: orderSync.orderId,
+			customerUpdated: orderSync.updated,
 		});
 	} catch (error) {
 		if (error instanceof ShipstationApiError) {

@@ -108,19 +108,16 @@ describe("mapSaleorOrderToShipstationV1", () => {
 	});
 });
 
-describe("syncSaleorCustomerToShipstationV1", () => {
-	it("does not update until the exact V2-created order is found", async () => {
+describe("ShipStation V1 order operations", () => {
+	it("creates the order directly through V1 with customer identifiers", async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response(
 				JSON.stringify({
-					orders: [
-						{
-							orderId: 123,
-							orderNumber: "1001",
-							orderKey: "different-order",
-							customerUsername: null,
-						},
-					],
+					orderId: 123,
+					orderNumber: "1001",
+					orderKey: "1",
+					customerId: 456,
+					customerUsername: "ada@example.com",
 				}),
 				{
 					status: 200,
@@ -132,124 +129,109 @@ describe("syncSaleorCustomerToShipstationV1", () => {
 
 		const { syncSaleorCustomerToShipstationV1 } = await import("./v1-customer-sync");
 
-		await expect(syncSaleorCustomerToShipstationV1(makeOrder())).rejects.toMatchObject({
-			status: 503,
-		});
+		const result = await syncSaleorCustomerToShipstationV1(makeOrder());
 
+		expect(result).toEqual({
+			orderId: 123,
+			updated: true,
+			customerId: 456,
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+
+		const [url, request] = fetchMock.mock.calls[0]!;
+		expect(url).toBe("https://ssapi.shipstation.com/orders/createorder");
+		expect(request).toMatchObject({ method: "POST" });
+
+		const body = JSON.parse(String((request as RequestInit).body));
+		expect(body.orderKey).toBe("1");
+		expect(body.orderNumber).toBe("1001");
+		expect(body.customerUsername).toBe("ada@example.com");
+		expect(body.customerEmail).toBe("ada@example.com");
+	});
+
+	it("finds only the V1 order with the exact Saleor order key", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					orders: [
+						{
+							orderId: 122,
+							orderNumber: "1001",
+							orderKey: "different-order",
+							orderStatus: "awaiting_shipment",
+						},
+						{
+							orderId: 123,
+							orderNumber: "1001",
+							orderKey: "1",
+							orderStatus: "awaiting_shipment",
+						},
+					],
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const { findSaleorOrderInShipstationV1 } = await import("./v1-customer-sync");
+
+		const result = await findSaleorOrderInShipstationV1("T3JkZXI6MQ==", "1001");
+
+		expect(result).toMatchObject({
+			orderId: 123,
+			orderKey: "1",
+			orderStatus: "awaiting_shipment",
+		});
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("updates an exact order even when its username already matches", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						orders: [
-							{
-								orderId: 123,
-								orderNumber: "1001",
-								orderKey: "1",
-								customerUsername: "ada@example.com",
-							},
-						],
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				),
-			)
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						orderId: 123,
-						orderNumber: "1001",
-						orderKey: "1",
-						customerId: 456,
-						customerUsername: "ada@example.com",
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				),
-			);
-
+	it("returns null when no exact Saleor order key exists", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					orders: [
+						{
+							orderId: 122,
+							orderNumber: "1001",
+							orderKey: "different-order",
+							orderStatus: "awaiting_shipment",
+						},
+					],
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
-		const { syncSaleorCustomerToShipstationV1 } = await import("./v1-customer-sync");
+		const { findSaleorOrderInShipstationV1 } = await import("./v1-customer-sync");
 
-		const result = await syncSaleorCustomerToShipstationV1(makeOrder());
+		const result = await findSaleorOrderInShipstationV1("T3JkZXI6MQ==", "1001");
 
-		expect(result).toEqual({
-			orderId: 123,
-			updated: true,
-			customerId: 456,
-		});
-		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(result).toBeNull();
 	});
 
-	it("updates a verified existing order with the customer identifier", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						orders: [
-							{
-								orderId: 123,
-								orderNumber: "1001",
-								orderKey: "1",
-								customerUsername: null,
-							},
-						],
-					}),
-					{
-						status: 200,
-						headers: {
-							"Content-Type": "application/json",
-						},
-					},
-				),
-			)
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						orderId: 123,
-						orderNumber: "1001",
-						orderKey: "1",
-						customerId: 456,
-						customerUsername: "ada@example.com",
-					}),
-					{
-						status: 200,
-						headers: {
-							"Content-Type": "application/json",
-						},
-					},
-				),
-			);
-
+	it("deletes a verified V1 order by its numeric order ID", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
-		const { syncSaleorCustomerToShipstationV1 } = await import("./v1-customer-sync");
+		const { deleteShipstationV1Order } = await import("./v1-customer-sync");
 
-		const result = await syncSaleorCustomerToShipstationV1(makeOrder());
+		await deleteShipstationV1Order(123);
 
-		expect(result).toEqual({
-			orderId: 123,
-			updated: true,
-			customerId: 456,
-		});
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-
-		const [, updateRequest] = fetchMock.mock.calls[1]!;
-		const request = updateRequest as RequestInit;
-		const body = JSON.parse(String(request.body));
-
-		expect(body.customerUsername).toBe("ada@example.com");
-		expect(body.customerEmail).toBe("ada@example.com");
-		expect(body.orderKey).toBe("1");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const [url, request] = fetchMock.mock.calls[0]!;
+		expect(url).toBe("https://ssapi.shipstation.com/orders/123");
+		expect(request).toMatchObject({ method: "DELETE" });
 	});
 });

@@ -18,6 +18,7 @@ const v1OrderSummarySchema = z
 		orderId: z.number(),
 		orderNumber: z.string(),
 		orderKey: z.string().nullable().optional(),
+		orderStatus: z.string().optional(),
 		customerUsername: z.string().nullable().optional(),
 	})
 	.passthrough();
@@ -39,7 +40,7 @@ const v1OrderResponseSchema = z
 	.passthrough();
 
 interface V1RequestOptions {
-	method?: "GET" | "POST";
+	method?: "GET" | "POST" | "DELETE";
 	body?: unknown;
 }
 
@@ -269,17 +270,47 @@ export function mapSaleorOrderToShipstationV1(
 }
 
 /**
- * Enriches an order already created through V2.
- *
- * The initial lookup is mandatory: it prevents the V1 create-or-update endpoint
- * from creating a duplicate if the V2 sales order is not visible yet.
+ * Creates or updates a ShipStation V1 order using the Saleor order ID as
+ * ShipStation's idempotency key. V1-created orders populate Customer records.
  */
 export async function syncSaleorCustomerToShipstationV1(
 	order: SaleorOrderForShipstation,
 ): Promise<CustomerSyncResult> {
 	const input = mapSaleorOrderToShipstationV1(order);
+
+	const createPayload = await requestV1("/orders/createorder", {
+		method: "POST",
+		body: input,
+	});
+	const created = v1OrderResponseSchema.safeParse(createPayload);
+
+	if (!created.success) {
+		throw new ShipstationApiError(
+			"Unrecognized ShipStation V1 create-or-update response",
+			502,
+			createPayload,
+		);
+	}
+
+	logger.info("Created or updated ShipStation V1 order and customer record", {
+		orderId: created.data.orderId,
+		orderNumber: created.data.orderNumber,
+	});
+
+	return {
+		orderId: created.data.orderId,
+		updated: true,
+		customerId: created.data.customerId,
+	};
+}
+
+export async function findSaleorOrderInShipstationV1(
+	saleorOrderId: string,
+	orderNumber: string,
+): Promise<z.infer<typeof v1OrderSummarySchema> | null> {
+	const orderKey = shortenSaleorOrderId(saleorOrderId);
 	const params = new URLSearchParams({
-		orderNumber: input.orderNumber,
+		orderNumber,
 		pageSize: "100",
 	});
 
@@ -294,38 +325,11 @@ export async function syncSaleorCustomerToShipstationV1(
 		);
 	}
 
-	const existing = list.data.orders.find((candidate) => candidate.orderKey === input.orderKey);
+	return list.data.orders.find((candidate) => candidate.orderKey === orderKey) ?? null;
+}
 
-	if (!existing) {
-		throw new ShipstationApiError(
-			`ShipStation order ${input.orderNumber} is not yet visible through V1`,
-			503,
-			listPayload,
-		);
-	}
-
-	const updatePayload = await requestV1("/orders/createorder", {
-		method: "POST",
-		body: input,
+export async function deleteShipstationV1Order(orderId: number): Promise<void> {
+	await requestV1(`/orders/${orderId}`, {
+		method: "DELETE",
 	});
-	const updated = v1OrderResponseSchema.safeParse(updatePayload);
-
-	if (!updated.success) {
-		throw new ShipstationApiError(
-			"Unrecognized ShipStation V1 order-update response",
-			502,
-			updatePayload,
-		);
-	}
-
-	logger.info("Linked ShipStation order to customer record", {
-		orderId: updated.data.orderId,
-		orderNumber: updated.data.orderNumber,
-	});
-
-	return {
-		orderId: updated.data.orderId,
-		updated: true,
-		customerId: updated.data.customerId,
-	};
 }

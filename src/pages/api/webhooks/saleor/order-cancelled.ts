@@ -3,9 +3,13 @@ import gql from "graphql-tag";
 
 import { saleorApp } from "@/saleor-app";
 import { createLogger } from "@/lib/logger";
-import { claimWebhookEvent } from "@/lib/idempotency";
+import { claimWebhookEvent, releaseWebhookEvent } from "@/lib/idempotency";
 import { shortenSaleorOrderId } from "@/lib/saleor/order-id";
 import { shipstationClient, ShipstationApiError } from "@/lib/shipstation/client";
+import {
+	deleteShipstationV1Order,
+	findSaleorOrderInShipstationV1,
+} from "@/lib/shipstation/v1-customer-sync";
 
 const logger = createLogger("webhook:order-cancelled");
 
@@ -39,6 +43,13 @@ export const orderCancelledWebhook = new SaleorAsyncWebhook<OrderCancelledPayloa
 const CANCELLABLE_STATUSES = new Set(["pending", "processing", "label_purchased", "ready_to_ship"]);
 const LABEL_VOID_REQUIRED_STATUSES = new Set(["label_purchased", "ready_to_ship"]);
 
+const V1_OPEN_ORDER_STATUSES = new Set([
+	"awaiting_payment",
+	"awaiting_shipment",
+	"pending_fulfillment",
+	"on_hold",
+]);
+
 export default orderCancelledWebhook.createHandler(async (req, res, ctx) => {
 	const order = ctx.payload.order;
 	if (!order) {
@@ -60,22 +71,49 @@ export default orderCancelledWebhook.createHandler(async (req, res, ctx) => {
 	logger.info("ORDER_CANCELLED received", { saleorOrderId: order.id, number: order.number });
 
 	try {
+		const v1Order = await findSaleorOrderInShipstationV1(order.id, order.number);
+
+		if (v1Order?.orderStatus === "cancelled") {
+			logger.info("ShipStation V1 order already cancelled", {
+				saleorOrderId: order.id,
+				shipstationOrderId: v1Order.orderId,
+			});
+			return res.status(200).json({ ok: true, alreadyCancelled: true });
+		}
+
+		if (v1Order?.orderStatus && V1_OPEN_ORDER_STATUSES.has(v1Order.orderStatus)) {
+			await deleteShipstationV1Order(v1Order.orderId);
+			logger.info("Deleted open ShipStation V1 order after Saleor cancellation", {
+				saleorOrderId: order.id,
+				shipstationOrderId: v1Order.orderId,
+			});
+			return res.status(200).json({
+				ok: true,
+				deletedShipstationOrderId: v1Order.orderId,
+			});
+		}
+
+		// Labeled orders and orders created by the previous V2 workflow are
+		// handled through the existing V2 shipment cancellation path.
 		const shipment = await shipstationClient.getShipmentByExternalId(shortOrderId);
 		if (!shipment) {
-			logger.info("No ShipStation shipment found — nothing to cancel", { saleorOrderId: order.id });
-			return res.status(200).json({ ok: true, skipped: "no_shipment" });
+			logger.info("No cancellable ShipStation order or shipment found", {
+				saleorOrderId: order.id,
+				v1OrderStatus: v1Order?.orderStatus ?? null,
+			});
+			return res.status(200).json({ ok: true, skipped: "no_cancellable_order" });
 		}
 
 		const status = shipment.shipment_status ?? "unknown";
 
 		if (status === "cancelled") {
-			logger.info("ShipStation shipment already cancelled", { saleorOrderId: order.id });
+			logger.info("ShipStation shipment already cancelled", {
+				saleorOrderId: order.id,
+			});
 			return res.status(200).json({ ok: true, alreadyCancelled: true });
 		}
 
 		if (!CANCELLABLE_STATUSES.has(status)) {
-			// Carrier already has the package — surface the conflict to operators via logs
-			// rather than failing the webhook.
 			logger.warn("Cannot cancel ShipStation shipment in this state", {
 				saleorOrderId: order.id,
 				shipmentId: shipment.shipment_id,
@@ -88,13 +126,14 @@ export default orderCancelledWebhook.createHandler(async (req, res, ctx) => {
 			});
 		}
 
-		// If a label was purchased, void it before cancelling — ShipStation rejects
-		// cancellation otherwise (400 invalid_status).
 		if (LABEL_VOID_REQUIRED_STATUSES.has(status)) {
 			const label = await shipstationClient.getLabelByExternalShipmentId(shortOrderId);
 			if (label && !label.voided) {
 				await shipstationClient.voidLabel(label.label_id);
-				logger.info("Voided ShipStation label", { saleorOrderId: order.id, labelId: label.label_id });
+				logger.info("Voided ShipStation label", {
+					saleorOrderId: order.id,
+					labelId: label.label_id,
+				});
 			}
 		}
 
@@ -115,14 +154,22 @@ export default orderCancelledWebhook.createHandler(async (req, res, ctx) => {
 				status: error.status,
 				reason: error.message,
 			});
-			// 4xx = our request was bad, ack so Saleor stops retrying. 5xx = transient.
-			const ack = error.status >= 400 && error.status < 500;
-			return res.status(ack ? 200 : 502).json({
+
+			const retryable =
+				error.status === 401 || error.status === 403 || error.status === 429 || error.status >= 500;
+
+			if (retryable) {
+				await releaseWebhookEvent(`order-cancelled:${order.id}`);
+			}
+
+			return res.status(retryable ? 502 : 200).json({
 				ok: false,
 				reason: error.message,
-				ackedDespiteFailure: ack,
+				ackedDespiteFailure: !retryable,
 			});
 		}
+
+		await releaseWebhookEvent(`order-cancelled:${order.id}`);
 		logger.error("Unhandled error in ORDER_CANCELLED handler", {
 			saleorOrderId: order.id,
 			error: error instanceof Error ? error.message : String(error),
