@@ -40,32 +40,42 @@ export function renderManualPaymentConfirmation(
 ) {
 	const currency = order.total.gross.currency;
 	const total = money(order.total.gross.amount, currency);
-	const manualDiscountAmount = Number(
-		order.metadata?.find((entry) => entry.key === "manual_payment_discount_amount")?.value ?? 5,
+	const storedManualDiscount = Number(
+		order.metadata?.find((entry) => entry.key === "manual_payment_discount_amount")?.value ?? NaN,
 	);
-	const safeManualDiscount = Number.isFinite(manualDiscountAmount) ? manualDiscountAmount : 5;
-	const subtotalAmount = order.total.gross.amount + safeManualDiscount;
+	const recordedManualDiscount = (order.discounts ?? []).find(
+		(discount) => discount.reason === "Manual payment savings",
+	)?.total.amount;
+	const safeManualDiscount = Number.isFinite(storedManualDiscount)
+		? Math.max(0, storedManualDiscount)
+		: Math.max(0, recordedManualDiscount ?? 0);
 	const lines = order.lines.map((line) => ({
 		label: `${line.productName}${line.variantName ? ` (${line.variantName})` : ""} × ${line.quantity}`,
-		amount: money((line.undiscountedUnitPrice?.gross.amount ?? line.unitPrice.gross.amount) * line.quantity, currency),
-		rawAmount:
-			(line.undiscountedUnitPrice?.gross.amount ?? line.unitPrice.gross.amount) * line.quantity,
+		regularAmount: (line.undiscountedUnitPrice?.gross.amount ?? line.unitPrice.gross.amount) * line.quantity,
+		saleAmount:
+			((line.undiscountedUnitPrice?.gross.amount ?? line.unitPrice.gross.amount) -
+				(line.unitDiscount?.amount ?? 0)) *
+			line.quantity,
 	}));
-	const productAmount = lines.reduce((sum, line) => sum + line.rawAmount, 0);
-	const reconstructedShippingAmount = subtotalAmount - productAmount;
-	const shippingAmount =
-		reconstructedShippingAmount >= 0
-			? reconstructedShippingAmount
-			: (order.shippingPrice?.gross.amount ?? 0);
+	const regularProductAmount = lines.reduce((sum, line) => sum + line.regularAmount, 0);
+	const saleProductAmount = lines.reduce((sum, line) => sum + line.saleAmount, 0);
+	const saleSavingsAmount = Math.max(0, regularProductAmount - saleProductAmount);
+	const promotions = (order.discounts ?? []).filter(
+		(discount) => discount.reason !== "Manual payment savings",
+	);
+	const shippingAmount = order.undiscountedShippingPrice?.amount ?? order.shippingPrice?.gross.amount ?? 0;
 	const shipping = money(shippingAmount, currency);
-	const subtotal = money(subtotalAmount, currency);
+	const taxAmount = order.total.tax?.amount ?? 0;
 	const manualDiscount = money(safeManualDiscount, currency);
 	const address = addressText(order);
 	const methodLabel = methodLabels[method];
 	const lineRows = lines
 		.map(
-			(line) => `<tr><td style="padding:8px 0;color:#3a3a3a;">${esc(line.label)}</td><td align="right" style="padding:8px 0;color:#191919;font-weight:600;">${esc(line.amount)}</td></tr>`,
+			(line) => `<tr><td style="padding:8px 0;color:#3a3a3a;">${esc(line.label)}</td><td align="right" style="padding:8px 0;color:#191919;font-weight:600;">${esc(money(line.saleAmount, currency))}${line.regularAmount > line.saleAmount ? `<br><span style="font-size:12px;color:#6b6b6b;text-decoration:line-through;">${esc(money(line.regularAmount, currency))}</span>` : ""}</td></tr>`,
 		)
+		.join("");
+	const promotionRows = promotions
+		.map((promotion) => `<tr><td style="padding:10px 0;color:#0d9488;">Promotion (${esc(promotion.reason?.trim() || "Promotion")})</td><td align="right" style="padding:10px 0;color:#0d9488;">-${esc(money(promotion.total.amount, currency))}</td></tr>`)
 		.join("");
 
 	const html = `<!doctype html><html><body style="margin:0;background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#191919;">
@@ -77,7 +87,7 @@ export function renderManualPaymentConfirmation(
 	<p style="margin:0 0 20px;color:#3a3a3a;line-height:1.6;">Thank you. We received your ${esc(methodLabel)} payment for order <strong>${esc(order.number)}</strong>. Your order is now confirmed and will move to fulfillment.</p>
 	<table role="presentation" width="100%" style="margin-bottom:20px;background:#f4f2ee;border:1px solid #e7e3db;border-radius:10px;"><tr><td style="padding:16px 18px;"><div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#6b6b6b;">Order number</div><div style="font-size:17px;font-weight:700;margin:4px 0 12px;">${esc(order.number)}</div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#6b6b6b;">Payment method</div><div style="font-size:16px;font-weight:700;margin-top:4px;">${esc(methodLabel)}</div></td></tr></table>
 	<h2 style="margin:0 0 8px;font-size:18px;">Order details</h2>
-	<table role="presentation" width="100%" style="font-size:14px;border-bottom:1px solid #e7e3db;">${lineRows}<tr><td style="padding:10px 0;border-top:1px solid #e7e3db;">Shipping</td><td align="right" style="padding:10px 0;border-top:1px solid #e7e3db;">${esc(shipping)}</td></tr><tr><td style="padding:10px 0;border-top:1px solid #e7e3db;font-weight:600;">Subtotal</td><td align="right" style="padding:10px 0;border-top:1px solid #e7e3db;font-weight:600;">${esc(subtotal)}</td></tr><tr><td style="padding:10px 0;color:#0d9488;">Manual-payment discount</td><td align="right" style="padding:10px 0;color:#0d9488;">-${esc(manualDiscount)}</td></tr><tr><td style="padding:12px 0;border-top:1px solid #191919;font-weight:700;font-size:16px;">Order total</td><td align="right" style="padding:12px 0;border-top:1px solid #191919;font-weight:700;font-size:16px;">${esc(total)}</td></tr></table>
+	<table role="presentation" width="100%" style="font-size:14px;border-bottom:1px solid #e7e3db;">${lineRows}${saleSavingsAmount > 0 ? `<tr><td style="padding:10px 0;color:#0d9488;">Sale savings</td><td align="right" style="padding:10px 0;color:#0d9488;">-${esc(money(saleSavingsAmount, currency))}</td></tr>` : ""}<tr><td style="padding:10px 0;">Product subtotal</td><td align="right" style="padding:10px 0;">${esc(money(saleProductAmount, currency))}</td></tr>${promotionRows}<tr><td style="padding:10px 0;border-top:1px solid #e7e3db;">Shipping</td><td align="right" style="padding:10px 0;border-top:1px solid #e7e3db;">${esc(shipping)}</td></tr>${taxAmount > 0 ? `<tr><td style="padding:10px 0;">Tax</td><td align="right" style="padding:10px 0;">${esc(money(taxAmount, currency))}</td></tr>` : ""}${safeManualDiscount > 0 ? `<tr><td style="padding:10px 0;color:#0d9488;">Manual-payment discount</td><td align="right" style="padding:10px 0;color:#0d9488;">-${esc(manualDiscount)}</td></tr>` : ""}<tr><td style="padding:12px 0;border-top:1px solid #191919;font-weight:700;font-size:16px;">Order total</td><td align="right" style="padding:12px 0;border-top:1px solid #191919;font-weight:700;font-size:16px;">${esc(total)}</td></tr></table>
 	${address.length ? `<h2 style="margin:24px 0 8px;font-size:18px;">Shipping address</h2><p style="margin:0 0 20px;color:#3a3a3a;line-height:1.55;">${address.map(esc).join("<br>")}</p>` : ""}
 	<p style="margin:24px 0 0;color:#6b6b6b;font-size:13px;line-height:1.6;">Questions? Email <a href="mailto:${esc(env.MANUAL_PAYMENT_SUPPORT_EMAIL)}" style="color:#0d9488;">${esc(env.MANUAL_PAYMENT_SUPPORT_EMAIL)}</a>.</p>
 	</td></tr></table></td></tr></table></body></html>`;
@@ -87,10 +97,13 @@ export function renderManualPaymentConfirmation(
 		`We received your ${methodLabel} payment for order ${order.number}.`,
 		"",
 		"ORDER DETAILS",
-		...lines.map((line) => `${line.label}: ${line.amount}`),
+		...lines.map((line) => `${line.label}: ${money(line.saleAmount, currency)}${line.regularAmount > line.saleAmount ? ` (regular ${money(line.regularAmount, currency)})` : ""}`),
+		...(saleSavingsAmount > 0 ? [`Sale savings: -${money(saleSavingsAmount, currency)}`] : []),
+		`Product subtotal: ${money(saleProductAmount, currency)}`,
+		...promotions.map((promotion) => `Promotion (${promotion.reason?.trim() || "Promotion"}): -${money(promotion.total.amount, currency)}`),
 		`Shipping: ${shipping}`,
-		`Subtotal: ${subtotal}`,
-		`Manual-payment discount: -${manualDiscount}`,
+		...(taxAmount > 0 ? [`Tax: ${money(taxAmount, currency)}`] : []),
+		...(safeManualDiscount > 0 ? [`Manual-payment discount: -${manualDiscount}`] : []),
 		`Order total: ${total}`,
 		...(address.length ? ["", "SHIPPING ADDRESS", ...address] : []),
 		"",

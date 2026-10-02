@@ -42,9 +42,21 @@ const SUBSCRIPTION = gql`
 					amount
 					currency
 				}
+				tax {
+					amount
+				}
 			}
 			shippingPrice {
 				gross {
+					amount
+				}
+			}
+			undiscountedShippingPrice {
+				amount
+			}
+			discounts {
+				reason
+				total {
 					amount
 				}
 			}
@@ -91,6 +103,9 @@ const SUBSCRIPTION = gql`
 					gross {
 						amount
 					}
+				}
+				unitDiscount {
+					amount
 				}
 				thumbnail {
 					url

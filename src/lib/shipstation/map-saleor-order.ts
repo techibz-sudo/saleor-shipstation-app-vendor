@@ -12,8 +12,10 @@ export interface SaleorOrderForShipstation {
 	created: string;
 	userEmail: string | null;
 	user: { email: string | null } | null;
-	total: { gross: { amount: number; currency: string } };
+	total: { gross: { amount: number; currency: string }; tax?: { amount: number } };
 	shippingPrice: { gross: { amount: number } } | null;
+	undiscountedShippingPrice?: { amount: number } | null;
+	discounts?: Array<{ reason: string | null; total: { amount: number } }>;
 	weight: { value: number; unit: "G" | "KG" | "LB" | "OZ" | "TONNE" } | null;
 	billingAddress: SaleorAddress | null;
 	shippingAddress: SaleorAddress | null;
@@ -25,6 +27,7 @@ export interface SaleorOrderForShipstation {
 		quantity: number;
 		unitPrice: { gross: { amount: number } };
 		undiscountedUnitPrice?: { gross: { amount: number } };
+		unitDiscount?: { amount: number };
 		thumbnail: { url: string } | null;
 	}>;
 	shippingMethodName?: string | null;
